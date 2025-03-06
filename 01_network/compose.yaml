@@ -1,0 +1,103 @@
+services:
+  traefik:
+    image: "traefik:v2.11.0"
+    container_name: "traefik"
+    restart: always
+    command:
+      # log level
+      #- "--log.level=DEBUG"
+      # Activate API (for dashboard access)
+      - "--api.dashboard=true"
+      # Enabling Docker provider
+      - "--providers.docker=true"
+      # Do not expose containers unless explicitly told so
+      - "--providers.docker.exposedbydefault=false"
+      # Traefik will listen to incoming request on the port 80 (HTTP)
+      # - "--entrypoints.web.address=:80"
+      # Traefik will listen to incoming request on the port 443 (HTTPS)
+      - "--entrypoints.websecure.address=:443"
+      # Enable a tls challenge named "tls-challenge"
+      - "--certificatesresolvers.tls-challenge.acme.tlschallenge=true"
+      # A valid email address to receive notifications from Let's Encrypt
+      - "--certificatesresolvers.tls-challenge.acme.email=${ACME_EMAIL}"
+      # Tell to store the certificate on a path under our volume (don't forget to create volume)
+      - "--certificatesresolvers.tls-challenge.acme.storage=/letsencrypt/acme.json"
+      # Defines a default docker network to use for connections to all containers
+      - "--providers.docker.network=milvue-net"
+    labels:
+      - "traefik.enable=true"
+      # Define the router for the Traefik dashboard
+      - "traefik.http.routers.mydashboard.rule=Host(`${DOMAIN_NAME}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+      - "traefik.http.routers.mydashboard.service=api@internal"
+      # Define the entry point and set tls
+      - "traefik.http.routers.mydashboard.entrypoints=websecure"
+      - "traefik.http.routers.mydashboard.tls=true"
+      - "traefik.http.routers.mydashboard.tls.certresolver=tls-challenge"
+      # Create BasicAuth middleware for dashboard authentication (upadte secret file with your actual credentials (htpasswd))
+      - "traefik.http.middlewares.dashboard-auth.basicauth.usersfile=/run/secrets/dashboard_secrets"
+      # Create Redirect middlaware to add trailing slash for the dashboard path
+      - "traefik.http.middlewares.add-dashboard-slash.redirectregex.regex=^https://${DOMAIN_NAME}/dashboard$$"
+      - "traefik.http.middlewares.add-dashboard-slash.redirectregex.replacement=https://${DOMAIN_NAME}/dashboard/"
+      - "traefik.http.middlewares.add-dashboard-slash.redirectregex.permanent=true"
+      # Add middlewares to router
+      - "traefik.http.routers.mydashboard.middlewares=dashboard-auth@docker, add-dashboard-slash@docker"
+    
+    secrets:
+      - dashboard_secrets
+
+    ports:
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      # Create a letsencrypt dir within the folder where the docker-compose file is
+      - letsencrypt:/letsencrypt
+    networks:
+      - netstack
+
+  portainer-ce:
+    image: portainer/portainer-ce:2.21.5
+    command: -H unix:///var/run/docker.sock
+    container_name: portainer
+    restart: always    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - netstack
+    labels:
+      - "traefik.enable=true"
+      # Explicitly use the network named "traefik-net"
+      - "traefik.docker.network=milvue-net"
+      # Create Traefik service to use the port 9000 to connect to `portainer`
+      - "traefik.http.services.portainer-service.loadbalancer.server.port=9000"
+      # Create portainer router 
+      - "traefik.http.routers.portainer-router.tls=true"
+      - "traefik.http.routers.portainer-router.entrypoints=websecure"
+      - "traefik.http.routers.portainer-router.tls.certresolver=tls-challenge"
+      - "traefik.http.routers.portainer-router.rule=Host(`${DOMAIN_NAME:?Give a valid domain name}`) && PathPrefix(`/portainer{regex:$$|/.*}`)"
+      # attach to a service
+      - "traefik.http.routers.portainer-router.service=portainer-service"
+      # Create middleware to strip the `/portainer`
+      - "traefik.http.middlewares.portainer-stripprefix.stripprefix.prefixes=/portainer"
+      # create middleware top add '/'
+      - "traefik.http.middlewares.portainer-redirectregex.redirectregex.regex=^https?://([^/]+)/portainer$$"  
+      - "traefik.http.middlewares.portainer-redirectregex.redirectregex.replacement=https://$${1}/portainer/"
+      - "traefik.http.middlewares.portainer-redirectregex.redirectregex.permanent=true"
+      # Add middlewares to router
+      - "traefik.http.routers.portainer-router.middlewares=portainer-redirectregex,portainer-stripprefix"
+
+secrets:
+  dashboard_secrets:
+    file: ./dashboard_secrets.txt
+
+networks:
+  netstack:
+    name: ${NETWORK_NAME}
+    driver: bridge
+    external: true
+
+volumes:
+  letsencrypt:
+    name: letsencrypt_data
+  portainer_data:
+    name: portainer_data

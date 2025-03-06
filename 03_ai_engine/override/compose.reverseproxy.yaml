@@ -1,0 +1,19 @@
+services:
+  integrator:
+    labels:
+      # Explicitly tell Traefik to expose this container   
+      - "traefik.enable=true"
+      # Explicitly use the network named "traefik-net"
+      - "traefik.docker.network=traefik-net"
+      # Create Traefik service to use the port 80 to connect to `the_container`
+      - "traefik.http.services.integrator-service.loadbalancer.server.port=8080"
+      
+      # Create a router (integrator-router)
+      ## The domain the service will respond to
+      - traefik.http.routers.integrator-router.rule=Host(`${DOMAIN_NAME:?Give a valid domain name}`)
+      ## attach to a service
+      - traefik.http.routers.integrator-router.service=integrator-service
+      ## Allow request only from the predefined entry point named "websecure"
+      - traefik.http.routers.integrator-router.entrypoints=websecure
+      ## Uses the Host rule to define which certificate to issue
+      - traefik.http.routers.integrator-router.tls.certresolver=tls-challenge

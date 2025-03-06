@@ -1,0 +1,76 @@
+x-postgres-config: &postgres-config
+  POSTGRES_HOST: postgres
+  POSTGRES_DB: gorm
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_PORT: 5432
+
+services:
+  postgres:
+    image: "postgres:14-alpine"
+    restart: unless-stopped
+    environment: *postgres-config      
+    volumes:
+      - type: bind
+        source: "./assets/init.sql"
+        target: /docker-entrypoint-initdb.d/init.sql
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - netstack
+
+  alembic:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/integrator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    entrypoint: [ "alembic", "upgrade", "head" ]
+    environment:
+      <<: *postgres-config
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - init
+    networks:
+      - netstack
+
+  admintoken:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/integrator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    environment:
+      <<: [*postgres-config]
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?need value if check_admin is true}
+    entrypoint:
+      [
+        "python",
+        "create_default_admin.py"
+      ]
+    volumes:
+      - type: bind
+        source: "./assets/create_default_admin.py"
+        target: /home/create_default_admin.py
+        read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      alembic:
+        condition: service_completed_successfully
+    profiles:
+      - init
+    networks:
+      - netstack
+
+networks:
+  netstack:
+    name: ${NETWORK_NAME}
+    driver: bridge
+    external: true
+
+volumes:
+  pgdata:
+    name: ${ENV_NAME}_pg_data
+    external: true
+  

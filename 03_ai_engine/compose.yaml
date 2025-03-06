@@ -1,0 +1,20 @@
+include:
+  - path:
+    - base/compose.base.yaml
+    - base/compose.${DEVICE:-cpu}.yaml
+
+    # secure integrator
+    #- override/compose.secure.integrator.yaml
+
+    # expose integrator port to access API
+    #- override/compose.expose.integrator.yaml
+
+    # add casvisor to stack
+    #- override/compose.cadvisor.yaml
+
+    # add labels for reverse proxy
+    - override/compose.reverseproxy.yaml
+    #- override/compose.cadvisor.reverseproxy.yaml
+        
+    # uncomment for debug
+    #- override/compose.debug.yaml

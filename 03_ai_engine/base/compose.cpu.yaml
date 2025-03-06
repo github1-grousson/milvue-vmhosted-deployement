@@ -1,0 +1,7 @@
+services:
+  deepor:
+    extends:
+      file: compose.base.yaml
+      service: deepor
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/deepor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}-cpu"
+    

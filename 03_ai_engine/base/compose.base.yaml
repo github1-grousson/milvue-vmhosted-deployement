@@ -1,0 +1,241 @@
+x-postgres-config: &postgres-config
+  POSTGRES_HOST: postgres
+  POSTGRES_DB: gorm
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_PORT: 5432
+
+x-minio-config: &minio-config
+  MINIO_URL: "http://minio:9000"
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-miniomilvue}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniopilletor}
+
+services:
+  minio:
+    image: "quay.io/minio/minio:RELEASE.2024-07-04T14-25-45Z"
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: minio-data
+        target: /data
+    command: server /data --console-address ":9090"
+    environment: *minio-config
+    healthcheck:
+      test: timeout 5s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
+      interval: 5s
+      retries: 1
+      start_period: 5s
+      timeout: 5s
+    deploy:
+      resources:
+        limits:
+          memory: "1GiB"
+    profiles:
+      - init
+      - run
+    networks:
+      - milvuenet
+
+  minio-client:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/new_localor/minio-client:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    environment:
+      <<: *minio-config
+      DICOMOR_URL: "http://dicomor:8080"
+    depends_on:
+      minio:
+        condition: service_healthy
+      dicomor:
+        condition: service_healthy
+    profiles:
+      - init
+    networks:
+      - milvuenet
+
+  models:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/new_localor/models:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    environment:
+      <<: *minio-config
+    depends_on:
+      minio-client:
+        condition: service_completed_successfully
+    profiles:
+      - init
+    networks:
+      - milvuenet
+
+  dicomor:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/dicomor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    restart: unless-stopped
+    environment:
+      STORAGE_SOURCE: "minio"
+      INTEGRATOR_URL: "http://integrator:8080"
+      REQUIRE_LOG_AUTH: False
+      <<: *minio-config
+      WORKERS: 1
+    healthcheck:
+      test: [ "CMD-SHELL", "curl http://localhost:8080/healthcheck" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: "2GiB"
+    profiles:
+      - init
+      - run
+    networks:
+      - milvuenet
+
+  formator:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/formator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    restart: unless-stopped
+    environment:
+      STORAGE_SOURCE: "minio"
+      <<: *minio-config
+      WORKERS: 1
+      DISABLE_DEV_SHM_USAGE: "true"
+      MILVOR_VERSION: ${MILVOR_VERSION:-${DOCKER_IMAGE_TAG}}
+      REQUIRE_LOG_AUTH: False
+      ABOUT_CLOUD_DOMAIN: "https://product.milvue.com"
+      ADD_STUDY_IN_QRCODE: "false"
+    deploy:
+      resources:
+        limits:
+          memory: "2.5GiB"
+    profiles:
+      - run
+    networks:
+      - milvuenet
+
+  integrator:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/integrator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    restart: unless-stopped
+    environment:
+      <<: [*postgres-config, *minio-config]
+      ORCHESTRATOR_URL: "http://orchestrator:8080"
+      INTEGRATOR_URL: "http://integrator:8080"
+      FORMATOR_URL: "http://proxor:8080/formator"
+      REQUIRE_AUTH: "false"
+      STORAGE_SOURCE: "minio"
+      WORKERS: 1
+      AUTHENTICATION_URL: ${AUTHENTICATION_URL:-https://prod.auth.milvue.com}
+      AUTHENTICATION_KEY: ${AUTHENTICATION_KEY:?give a valid auth key}
+      CHECK_ADMIN: "true"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?need value if check_admin is true}
+      REQUIRE_LOG_AUTH: False
+      RELAUNCH_RUNNING_INSTANCES: True
+    healthcheck:
+      test: [ "CMD-SHELL", "curl http://localhost:8080/healthcheck" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    entrypoint:
+        [
+          "bash",
+          "-c",
+          "./relaunch_lost_predictions.sh & hypercorn app.main:app --workers ${WORKERS:-1} --bind 0.0.0.0:8080"
+        ]
+    deploy:
+      resources:
+        limits:
+          memory: "1.5GiB"
+    profiles:
+      - run
+    networks:
+      - milvuenet
+
+  deepor:
+    restart: unless-stopped
+    environment:
+      AUTHENTICATION_URL: ${AUTHENTICATION_URL:-https://prod.auth.milvue.com}
+      AUTHENTICATION_KEY: ${AUTHENTICATION_KEY:?give a valid auth key}
+      REQUIRE_LOG_AUTH: False
+      STORAGE_SOURCE: "minio"
+      <<: *minio-config
+      NOHIDE: torpille
+      WORKERS: 1
+      LOAD_MODELS_AT_LAUNCH: true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/grpc_health_probe-linux-amd64",
+          "-addr=localhost:50051"
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    profiles:
+      - run
+    networks:
+      - milvuenet
+
+  predictor:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/predictor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    restart: unless-stopped
+    environment:
+      <<: *minio-config
+      DEEPOR_URL: "http://deepor:50051"
+      STORAGE_SOURCE: "minio"
+      WORKERS: 1
+      AZURE_OPENAI_ENDPOINT: ""
+      AZURE_OPENAI_API_VERSION: ""
+      AZURE_OPENAI_API_KEY: ""
+      REQUIRE_LOG_AUTH: False
+    deploy:
+      resources:
+        limits:
+          memory: "4GiB"
+    profiles:
+      - run
+    networks:
+      - milvuenet
+
+  orchestrator:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/orchestrator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    restart: unless-stopped
+    environment:
+      REQUIRE_AUTH: "false"
+      STORAGE_SOURCE: "minio"
+      SYNCHRONEOUS: "true"
+      PREDICTOR_URL: "http://proxor:8080/predictor"
+    healthcheck:
+      test: [ "CMD", "./healthcheck" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles:
+      - run
+    networks:
+      - milvuenet
+
+  proxor:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/proxor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    restart: unless-stopped
+    environment:
+      FORMATOR_URL: "http://formator:8080"
+      PREDICTOR_URL: "http://predictor:8080"
+      FORMATOR_THREADS: 2
+      PREDICTOR_THREADS: 3
+    healthcheck:
+      test: [ "CMD", "./healthcheck" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles:
+      - run
+    networks:
+      - milvuenet
+
+volumes:
+  minio-data:
+    name: ${ENV_NAME}_minio_data
+    external: true
+  
+networks:
+  milvuenet:
+    name: ${NETWORK_NAME}
+    driver: bridge
+    external: true
