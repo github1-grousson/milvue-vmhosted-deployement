@@ -11,6 +11,7 @@ x-minio-config: &minio-config
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniopilletor}
 
 services:
+  
   minio:
     image: "quay.io/minio/minio:RELEASE.2024-07-04T14-25-45Z"
     restart: unless-stopped
@@ -30,38 +31,11 @@ services:
       resources:
         limits:
           memory: "1GiB"
+    networks:
+      - milvuenet
     profiles:
       - init
       - run
-    networks:
-      - milvuenet
-
-  minio-client:
-    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/new_localor/minio-client:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
-    environment:
-      <<: *minio-config
-      DICOMOR_URL: "http://dicomor:8080"
-    depends_on:
-      minio:
-        condition: service_healthy
-      dicomor:
-        condition: service_healthy
-    profiles:
-      - init
-    networks:
-      - milvuenet
-
-  models:
-    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/new_localor/models:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
-    environment:
-      <<: *minio-config
-    depends_on:
-      minio-client:
-        condition: service_completed_successfully
-    profiles:
-      - init
-    networks:
-      - milvuenet
 
   dicomor:
     image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/dicomor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
@@ -81,11 +55,38 @@ services:
       resources:
         limits:
           memory: "2GiB"
+    networks:
+      - milvuenet
     profiles:
       - init
       - run
+
+  minio-client:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/new_localor/minio-client:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    environment:
+      <<: *minio-config
+      DICOMOR_URL: "http://dicomor:8080"
+    depends_on:
+      minio:
+        condition: service_healthy
+      dicomor:
+        condition: service_healthy
     networks:
       - milvuenet
+    profiles:
+      - init
+
+  models:
+    image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/new_localor/models:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
+    environment:
+      <<: *minio-config
+    depends_on:
+      minio-client:
+        condition: service_completed_successfully
+    networks:
+      - milvuenet
+    profiles:
+      - init
 
   formator:
     image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/formator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
@@ -103,10 +104,10 @@ services:
       resources:
         limits:
           memory: "2.5GiB"
-    profiles:
-      - run
     networks:
       - milvuenet
+    profiles:
+      - run
 
   integrator:
     image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/integrator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
@@ -118,13 +119,14 @@ services:
       FORMATOR_URL: "http://proxor:8080/formator"
       REQUIRE_AUTH: "false"
       STORAGE_SOURCE: "minio"
+      CHECK_ADMIN: "true"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?need value if check_admin is true}
       WORKERS: 1
       AUTHENTICATION_URL: ${AUTHENTICATION_URL:-https://prod.auth.milvue.com}
       AUTHENTICATION_KEY: ${AUTHENTICATION_KEY:?give a valid auth key}
-      CHECK_ADMIN: "true"
-      ADMIN_TOKEN: ${ADMIN_TOKEN:?need value if check_admin is true}
       REQUIRE_LOG_AUTH: False
       RELAUNCH_RUNNING_INSTANCES: True
+    
     healthcheck:
       test: [ "CMD-SHELL", "curl http://localhost:8080/healthcheck" ]
       interval: 5s
@@ -141,10 +143,10 @@ services:
       resources:
         limits:
           memory: "1.5GiB"
-    profiles:
-      - run
     networks:
       - milvuenet
+    profiles:
+      - run
 
   deepor:
     restart: unless-stopped
@@ -167,10 +169,13 @@ services:
       interval: 10s
       timeout: 10s
       retries: 20
-    profiles:
-      - run
+    depends_on:
+      minio:
+        condition: service_healthy
     networks:
       - milvuenet
+    profiles:
+      - run
 
   predictor:
     image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/predictor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
@@ -188,10 +193,10 @@ services:
       resources:
         limits:
           memory: "4GiB"
-    profiles:
-      - run
     networks:
       - milvuenet
+    profiles:
+      - run
 
   orchestrator:
     image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/orchestrator:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
@@ -206,10 +211,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    profiles:
-      - run
     networks:
       - milvuenet
+    profiles:
+      - run
 
   proxor:
     image: "eu.gcr.io/${REGISTRY_NAME:-milvue-vpn}/proxor:${DOCKER_IMAGE_TAG:?give a valid tag of image to pull}"
@@ -224,18 +229,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    profiles:
-      - run
     networks:
       - milvuenet
+    profiles:
+      - run
 
 volumes:
   minio-data:
     name: ${ENV_NAME}_minio_data
     external: true
-  
+
 networks:
   milvuenet:
     name: ${NETWORK_NAME}
-    driver: bridge
     external: true

@@ -60,7 +60,22 @@ Before the regular launch, verify the environment file for the admin token, envi
 docker compose -f 02_database/compose.yaml --profile init up
 ```
 
-### 3.2 Regular Operation
+### 3.2 Cleanup
+
+Once the database is running, you can remove the initialization containers:
+
+```bash	
+docker compose -f 02_database/compose.yaml --profile init down
+```
+
+Or
+
+```bash
+docker rm -f $(docker ps -a --filter "name=alembic" -q)
+docker rm -f $(docker ps -a --filter "name=admintoken" -q)
+```
+
+### 3.3 Regular Operation
 
 Once the initial setup is complete, start the database stack with:
 
@@ -82,13 +97,33 @@ For the first run, check the .env file and execute the initialization profile:
 docker compose -f 03_ai-engine/compose.yaml --profile init up
 ```
 
-### 4.2 Regular Operation
+### 4.2 Cleanup
+
+Once the AI engine is running, you can remove the initialization container:
+
+```bash
+docker compose -f 03_ai_engine/compose.yaml --profile init down
+```
+
+Or
+
+```bash
+docker rm -f $(docker ps -a --filter "name=minio-client" -q)
+docker rm -f $(docker ps -a --filter "name=models" -q)
+```
+
+### 4.3 Regular Operation
 
 After the initial setup, run the AI engine using the run profile:
 
 ```bash
 docker compose -f 03_ai-engine/compose.yaml --profile run up -d
 ```
+
+### 4.4 Create a user
+
+Once AI Engine is running, you can create a user using standard cURL or POSTMAN requests by using Admin API
+
 
 ---
 
